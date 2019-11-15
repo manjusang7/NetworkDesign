@@ -198,10 +198,11 @@ if __name__ == "__main__":
     s.bind((address, recv_from_port))
     error_prob = 0
     loss_prob = 0
-    if len(sys.argv) == 2:
+    if len(sys.argv) == 3:
         error_prob = int(sys.argv[2])/100
-    elif len(sys.argv) > 3:
+    elif len(sys.argv) == 4:
         loss_prob = int(sys.argv[3])/100
+    print(len(sys.argv))
     filename = sys.argv[1]
     r = readFile(filename)
     start_time = time.time()
