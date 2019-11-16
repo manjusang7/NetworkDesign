@@ -18,7 +18,7 @@ PACKET_SIZE = 1024
 ACK1 = b"1" * PACKET_SIZE
 ACK0 = b"0" * PACKET_SIZE
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.bind(('',port))
+s.bind(('', port))
 
 
 def checksum(rcvpkt):
@@ -58,10 +58,15 @@ def make_pkt(data, seqNum):
 
 def rdt_rcv(port):
     pkt, client = s.recvfrom(2048)  # receive as bytes
-    if random.random() < error_prob:  # intentionally make error to ACK pkt
+    if len(pkt) == 4:  # end pkt
+        return pkt, client
+    if random.random() < error_prob:  # intentionally make error to DATA pkt
         return make_error(pkt), client
+    elif random.random() < loss_prob:  # intentionally make loss to DATA pkt
+        return None, client
     else:
         return pkt, client
+
 
 def make_error(pkt) -> bytes:
     temp = bytearray(pkt)
@@ -89,7 +94,10 @@ def recv(send_to_port, recv_from_port):
     while True:
         if State == STATE.WAIT_0:
             rcvpkt, client = rdt_rcv(recv_from_port)
-            if len(rcvpkt) == 4:
+            if rcvpkt is None:
+                print("pkt loss")
+                continue  # DATA pkt loss
+            if len(rcvpkt) == 4:  # end pkt
                 break
             if isCorrupt(rcvpkt) or has_seq(1, rcvpkt):  # receive fail
                 print("Receive failed1")
@@ -104,6 +112,9 @@ def recv(send_to_port, recv_from_port):
                 State = STATE.WAIT_1
         elif State == STATE.WAIT_1:
             rcvpkt, client = rdt_rcv(recv_from_port)
+            if rcvpkt is None:
+                print("pkt loss")
+                continue  # DATA pkt loss
             if len(rcvpkt) == 4:
                 break
             if isCorrupt(rcvpkt) or has_seq(0, rcvpkt):  # receive fail
@@ -120,13 +131,16 @@ def recv(send_to_port, recv_from_port):
             exit(1)
     return b"".join(data)
 
+
 # At receiver side, data is received from port 5002, send to port 5003
 if __name__ == "__main__":
     send_to_port = 5003
     recv_from_port = 5002
     error_prob = 0
-    if len(sys.argv) > 1:
+    if len(sys.argv) == 2:
         error_prob = int(sys.argv[1])/100
+    if len(sys.argv) == 3:
+        loss_prob = int(sys.argv[2])/100
     data = recv(send_to_port, recv_from_port)
     f = open("recv_image.jpg", "wb+")
     f.write(data)

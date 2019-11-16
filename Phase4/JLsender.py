@@ -21,7 +21,7 @@ t = 0
 sndpkt = None
 PACKET_SIZE = 1024
 timeout = 0.05
-event2 = threading.Event()
+event = threading.Event()
 
 
 # Packet format includes sequence number, checksum and payload
@@ -47,14 +47,14 @@ def readFile(filename) -> bytes:
 
 def timer():                                                    # another thread for timer
     global sndpkt, address, send_to_port, t, timeout
-    event2.wait()                                               # wait for green light from the main thread
+    # wait for green light from the main thread
+    event.wait()
     couting_time = time.time()
-    while event2.is_set():
-        if (time.time() - couting_time) > timeout:
+    while event.is_set():
+        if (time.time() - couting_time) > timeout: # timeout
             udt_send(sndpkt, address, send_to_port)  # resend
+            print("resend due to timeout")
             couting_time = time.time()
-        else:
-            pass
 
 
 def data_iter(data):
@@ -101,7 +101,7 @@ def rdt_rcv(address, port) -> bytes:
     if random.random() < error_prob:  # intentionally make error to ACK pkt
         return make_error(rcvpkt)
     elif random.random() < loss_prob:  # intentionally make loss to ACK pkt
-        pass
+        return None
     else:
         return rcvpkt
 
@@ -155,30 +155,30 @@ def send(data, address, send_to_port, recv_from_port):
                 print("Packet No." + str(t) + " sent.")
             elif State == STATE.WAIT_ACK_0:
                 t1 = threading.Thread(target=timer, daemon=True)
-                t1.start()                                       # start the waiting timer
-                event2.set()                                     # green light for timer
+                t1.start()                                       # start the timer
+                event.set()                                     # green light for timer
                 rcvACK = rdt_rcv(address, recv_from_port)
-                if rcvACK == None:
+                if rcvACK == None: # timeout
                     time.sleep(0.04)
                 elif is_ACK(rcvACK, 0) and not isCorrupt(rcvACK):  # Successful send
                     State = STATE.WAIT_CALL_1
                 else:
                     print("Resend Packet No." + str(t))
                     udt_send(sndpkt, address, send_to_port)     # resend
-                event2.clear()                                  # red light for timer
+                event.clear()                                  # red light for timer
             elif State == STATE.WAIT_ACK_1:
                 t1 = threading.Thread(target=timer, daemon=True)
                 t1.start()                                       # start the waiting timer
-                event2.set()                                     # green light for timer
+                event.set()                                     # green light for timer
                 rcvACK = rdt_rcv(address, recv_from_port)
-                if rcvACK == None:
+                if rcvACK == None: # timeout
                     time.sleep(0.04)
                 elif is_ACK(rcvACK, 1) and not isCorrupt(rcvACK):  # Successful send
                     State = STATE.WAIT_CALL_0
                 else:
                     print("Resend Packet No." + str(t))
                     udt_send(sndpkt, address, send_to_port)      # resend
-                event2.clear()                                   # red light for timer
+                event.clear()                                   # red light for timer
             else:
                 exit(1)  # Unexpected error
 
