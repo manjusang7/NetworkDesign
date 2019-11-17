@@ -37,7 +37,6 @@ The end packet is of length 4, which content is determined 0000. When receiver g
 - rdt_rcv: The overall function controlling receiving packet
 - make_error: Intentionally damage some bytes in the packet for experiments.
 
-<div style="page-break-after:always;"></div>
 ### Sender
 
 Sender program is implemented as a FSM which has four states: 
@@ -247,4 +246,4 @@ def recv(send_to_port, recv_from_port):
 
 ## Option Experiment
 
-![](./Transmission_time_with_error_loss.PNG)
+![](./Chart.PNG)
