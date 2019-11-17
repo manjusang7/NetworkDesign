@@ -1,0 +1,216 @@
+<h1 id="design-file">Design File</h1>
+<h2 id="title-and-authors">Title and Authors</h2>
+<ul>
+<li>Phase 4</li>
+<li>Shiyang Chen, Chun-Jen Lin, Aniket Bhatt</li>
+</ul>
+<h2 id="purpose-of-the-phase">Purpose of The Phase</h2>
+<p>This phase is a simple implement for RDT 3.0 over an unreliable UDP channel with bit-errors and packet-loss.</p>
+<p>We build two program for send and receive respectively. Both programs can intentionally set bit-error and packet-loss probabilities for simulating real channel.</p>
+<h2 id="code-explanation">Code Explanation</h2>
+<h3 id="protocol">Protocol</h3>
+<p>The protocol we used is a modified RDT consisting of 2 types of packet, data packet and end packet. Data packet is of length 1032, including 4 bytes of sequence number(an integer) ,4 bytes of checksum(an integer) and 1024 bytes data payload.</p>
+<p>According to the RDT 3.0 protocol, the sequence number will be 0 or 1. The ACK packet has two types: ACK0 and ACK1. The data payload field of ACK1 is filled with consecutive 1. The data payload field of ACK0 is filled with consecutive 0.</p>
+<p>The packets may loss during transmission. Therefore, there is a countdown timer at sender side to determine whether the packet is loss. The timer starts after that the data packet is sent. If the time of waiting for ACK is exceeded to the limit, it causes a timeout and the packet will be resent.</p>
+<p>The end packet is of length 4, which content is determined 0000. When receiver get the end packet, it means the transmission is over and all connection will be closed.</p>
+<h3 id="functions">Functions:</h3>
+<ul>
+<li>isCorrupt: To check whether the received packet is corrupted</li>
+<li>is_ACK: To check whether the received ACK packet is the one expected.</li>
+<li>udt_send: A warp of UDP socket, which send the packet over UDP protocol to target machine.</li>
+<li>extract: Extract the packet into sequence number, checksum and data payload</li>
+<li>readFile: Read file into bytes</li>
+<li>data_iter: An iterator which produces fixed-length bytes segment from the input bytes</li>
+<li>checksum: Calculate the checksum of bytes</li>
+<li>make_pkt: Assemble bytes into packet by adding sequence number and checksum ahead</li>
+<li>rdt_send: The overall function controlling sending packet</li>
+<li>rdt_rcv: The overall function controlling receiving packet</li>
+<li>make_error: Intentionally damage some bytes in the packet for experiments.</li>
+</ul>
+<div style="page-break-after:always;">
+
+</div>
+<h3 id="sender">Sender</h3>
+<p>Sender program is implemented as a FSM which has four states:</p>
+<ol type="1">
+<li>WAIT_CALL_0</li>
+<li>WAIT_CALL_1</li>
+<li>WAIT_ACK_0</li>
+<li>WAIT_ACK_1</li>
+</ol>
+<p>It calls the function ‘send’ which is the sending API of RDT 2.2.</p>
+<h3 id="receiver">Receiver</h3>
+<p>Receiver program is implemented as a FSM which has two states:</p>
+<ol type="1">
+<li>WAIT_0</li>
+<li>WAIT_1</li>
+</ol>
+<p>It calls the function ‘recv’ which is the sending API of RDT 2.2.</p>
+<div style="page-break-after:always;">
+
+</div>
+<h2 id="code-snippets">Code snippets</h2>
+<h3 id="timer">timer</h3>
+<p>The timer is executed at another thread. The main thread send signal to timer thread to start and restart the timer. When timeout, the timer resend the packet.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1"></a><span class="kw">def</span> timer(): <span class="co"># another thread for timer</span></span>
+<span id="cb1-2"><a href="#cb1-2"></a>    <span class="kw">global</span> sndpkt, address, send_to_port, t, timeout</span>
+<span id="cb1-3"><a href="#cb1-3"></a>    <span class="co"># wait for green light from the main thread</span></span>
+<span id="cb1-4"><a href="#cb1-4"></a>    event.wait()</span>
+<span id="cb1-5"><a href="#cb1-5"></a>    couting_time <span class="op">=</span> time.time()</span>
+<span id="cb1-6"><a href="#cb1-6"></a>    <span class="cf">while</span> event.is_set():</span>
+<span id="cb1-7"><a href="#cb1-7"></a>        <span class="cf">if</span> (time.time() <span class="op">-</span> couting_time) <span class="op">&gt;</span> timeout:  <span class="co"># timeout</span></span>
+<span id="cb1-8"><a href="#cb1-8"></a>            udt_send(sndpkt, address, send_to_port)  <span class="co"># resend</span></span>
+<span id="cb1-9"><a href="#cb1-9"></a>            <span class="bu">print</span>(<span class="st">&quot;resend due to timeout&quot;</span>)</span>
+<span id="cb1-10"><a href="#cb1-10"></a>            couting_time <span class="op">=</span> time.time()</span></code></pre></div>
+<h3 id="rdt_rcv">rdt_rcv</h3>
+<p>The rdt_rcv receives the ACK packet from receiver. If the error rate and loss rate are setted, it will randomly damage the received packet or prevent the received packet to be processed further.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1"></a><span class="kw">def</span> rdt_rcv(address, port) <span class="op">-&gt;</span> <span class="bu">bytes</span>:</span>
+<span id="cb2-2"><a href="#cb2-2"></a>    <span class="kw">global</span> error_prob</span>
+<span id="cb2-3"><a href="#cb2-3"></a>    <span class="kw">global</span> loss_prob</span>
+<span id="cb2-4"><a href="#cb2-4"></a>    rcvpkt, _ <span class="op">=</span> s.recvfrom(<span class="dv">2048</span>)</span>
+<span id="cb2-5"><a href="#cb2-5"></a>    <span class="cf">if</span> random.random() <span class="op">&lt;</span> error_prob:  <span class="co"># intentionally make error to ACK pkt</span></span>
+<span id="cb2-6"><a href="#cb2-6"></a>        <span class="cf">return</span> make_error(rcvpkt)</span>
+<span id="cb2-7"><a href="#cb2-7"></a>    <span class="cf">elif</span> random.random() <span class="op">&lt;</span> loss_prob:  <span class="co"># intentionally make loss to ACK pkt</span></span>
+<span id="cb2-8"><a href="#cb2-8"></a>        <span class="cf">return</span> <span class="va">None</span></span>
+<span id="cb2-9"><a href="#cb2-9"></a>    <span class="cf">else</span>:</span>
+<span id="cb2-10"><a href="#cb2-10"></a>        <span class="cf">return</span> rcvpkt</span></code></pre></div>
+<h3 id="make-and-extract-packet">make and extract packet</h3>
+<p>The struct library is used to serialize and deserialize data into binary.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1"></a><span class="kw">def</span> make_pkt(data, seqNum) <span class="op">-&gt;</span> <span class="bu">bytes</span>:</span>
+<span id="cb3-2"><a href="#cb3-2"></a>    fmt <span class="op">=</span> <span class="st">&quot;!II&quot;</span> <span class="op">+</span> <span class="bu">str</span>(PACKET_SIZE) <span class="op">+</span> <span class="st">&quot;s&quot;</span>  <span class="co"># !II1024s network byte order</span></span>
+<span id="cb3-3"><a href="#cb3-3"></a>    chksum <span class="op">=</span> checksum(data)</span>
+<span id="cb3-4"><a href="#cb3-4"></a>    <span class="cf">return</span> struct.pack(fmt, seqNum, chksum, data)</span>
+<span id="cb3-5"><a href="#cb3-5"></a></span>
+<span id="cb3-6"><a href="#cb3-6"></a><span class="kw">def</span> extract(pkt):</span>
+<span id="cb3-7"><a href="#cb3-7"></a>    <span class="co"># Extract the packet into sequence number, checksum and data payload</span></span>
+<span id="cb3-8"><a href="#cb3-8"></a>    fmt <span class="op">=</span> <span class="st">&quot;!II&quot;</span> <span class="op">+</span> <span class="bu">str</span>(PACKET_SIZE) <span class="op">+</span> <span class="st">&quot;s&quot;</span>  <span class="co"># !II1024s network byte order</span></span>
+<span id="cb3-9"><a href="#cb3-9"></a>    seqNum, chksum, data <span class="op">=</span> struct.unpack(fmt, pkt)</span>
+<span id="cb3-10"><a href="#cb3-10"></a>    <span class="cf">return</span> seqNum, chksum, data</span></code></pre></div>
+<h3 id="checksum">checksum</h3>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1"></a><span class="kw">def</span> checksum(pkt) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
+<span id="cb4-2"><a href="#cb4-2"></a>    <span class="bu">sum</span> <span class="op">=</span> <span class="dv">0</span></span>
+<span id="cb4-3"><a href="#cb4-3"></a>    <span class="co"># convert binary data to hexadecimal for checksum</span></span>
+<span id="cb4-4"><a href="#cb4-4"></a>    data_hex <span class="op">=</span> binascii.hexlify(pkt)</span>
+<span id="cb4-5"><a href="#cb4-5"></a>    <span class="cf">for</span> i <span class="kw">in</span> data_hex:</span>
+<span id="cb4-6"><a href="#cb4-6"></a>        <span class="bu">sum</span> <span class="op">=</span> <span class="bu">sum</span> <span class="op">+</span> <span class="bu">int</span>(<span class="bu">str</span>(i), <span class="dv">16</span>)</span>
+<span id="cb4-7"><a href="#cb4-7"></a>    <span class="cf">return</span> <span class="bu">sum</span></span></code></pre></div>
+<div style="page-break-after:always;">
+
+</div>
+<h3 id="send">send</h3>
+<p>The send function implement the RDT 3.0 sender FSM and its main logic.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1"></a><span class="kw">def</span> send(data, address, send_to_port, recv_from_port):</span>
+<span id="cb5-2"><a href="#cb5-2"></a>    it <span class="op">=</span> data_iter(data)</span>
+<span id="cb5-3"><a href="#cb5-3"></a>    <span class="kw">global</span> State, sndpkt, t</span>
+<span id="cb5-4"><a href="#cb5-4"></a>    State <span class="op">=</span> STATE.WAIT_CALL_0</span>
+<span id="cb5-5"><a href="#cb5-5"></a>    <span class="bu">print</span>(<span class="st">&quot;Start sending&quot;</span>)</span>
+<span id="cb5-6"><a href="#cb5-6"></a>    <span class="cf">while</span> <span class="va">True</span>:</span>
+<span id="cb5-7"><a href="#cb5-7"></a>        <span class="cf">try</span>:</span>
+<span id="cb5-8"><a href="#cb5-8"></a>            <span class="cf">if</span> State <span class="op">==</span> STATE.WAIT_CALL_0:</span>
+<span id="cb5-9"><a href="#cb5-9"></a>                sndpkt <span class="op">=</span> rdt_send(<span class="bu">next</span>(it), address, send_to_port)</span>
+<span id="cb5-10"><a href="#cb5-10"></a>                State <span class="op">=</span> STATE.WAIT_ACK_0</span>
+<span id="cb5-11"><a href="#cb5-11"></a>                t <span class="op">+=</span> <span class="dv">1</span></span>
+<span id="cb5-12"><a href="#cb5-12"></a>                <span class="bu">print</span>(<span class="st">&quot;Packet No.&quot;</span> <span class="op">+</span> <span class="bu">str</span>(t) <span class="op">+</span> <span class="st">&quot; sent.&quot;</span>)</span>
+<span id="cb5-13"><a href="#cb5-13"></a>            <span class="cf">elif</span> State <span class="op">==</span> STATE.WAIT_CALL_1:</span>
+<span id="cb5-14"><a href="#cb5-14"></a>                sndpkt <span class="op">=</span> rdt_send(<span class="bu">next</span>(it), address, send_to_port)</span>
+<span id="cb5-15"><a href="#cb5-15"></a>                State <span class="op">=</span> STATE.WAIT_ACK_1</span>
+<span id="cb5-16"><a href="#cb5-16"></a>                t <span class="op">+=</span> <span class="dv">1</span></span>
+<span id="cb5-17"><a href="#cb5-17"></a>                <span class="bu">print</span>(<span class="st">&quot;Packet No.&quot;</span> <span class="op">+</span> <span class="bu">str</span>(t) <span class="op">+</span> <span class="st">&quot; sent.&quot;</span>)</span>
+<span id="cb5-18"><a href="#cb5-18"></a>            <span class="cf">elif</span> State <span class="op">==</span> STATE.WAIT_ACK_0:</span>
+<span id="cb5-19"><a href="#cb5-19"></a>                t1 <span class="op">=</span> threading.Thread(target<span class="op">=</span>timer, daemon<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb5-20"><a href="#cb5-20"></a>                t1.start()       <span class="co"># start the timer</span></span>
+<span id="cb5-21"><a href="#cb5-21"></a>                event.<span class="bu">set</span>()                                     <span class="co"># start timer</span></span>
+<span id="cb5-22"><a href="#cb5-22"></a>                rcvACK <span class="op">=</span> rdt_rcv(address, recv_from_port)</span>
+<span id="cb5-23"><a href="#cb5-23"></a>                <span class="cf">if</span> rcvACK <span class="op">==</span> <span class="va">None</span>:  <span class="co"># timeout</span></span>
+<span id="cb5-24"><a href="#cb5-24"></a>                    time.sleep(<span class="fl">0.04</span>)</span>
+<span id="cb5-25"><a href="#cb5-25"></a>                <span class="cf">elif</span> is_ACK(rcvACK, <span class="dv">0</span>) <span class="kw">and</span> <span class="kw">not</span> isCorrupt(rcvACK):  <span class="co"># Successful send</span></span>
+<span id="cb5-26"><a href="#cb5-26"></a>                    State <span class="op">=</span> STATE.WAIT_CALL_1</span>
+<span id="cb5-27"><a href="#cb5-27"></a>                <span class="cf">else</span>:</span>
+<span id="cb5-28"><a href="#cb5-28"></a>                    <span class="bu">print</span>(<span class="st">&quot;Resend Packet No.&quot;</span> <span class="op">+</span> <span class="bu">str</span>(t))</span>
+<span id="cb5-29"><a href="#cb5-29"></a>                    udt_send(sndpkt, address, send_to_port)     <span class="co"># resend</span></span>
+<span id="cb5-30"><a href="#cb5-30"></a>                event.clear()                                  <span class="co"># stop timer</span></span>
+<span id="cb5-31"><a href="#cb5-31"></a>            <span class="cf">elif</span> State <span class="op">==</span> STATE.WAIT_ACK_1:</span>
+<span id="cb5-32"><a href="#cb5-32"></a>                t1 <span class="op">=</span> threading.Thread(target<span class="op">=</span>timer, daemon<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb5-33"><a href="#cb5-33"></a>                t1.start()         <span class="co"># start the waiting timer</span></span>
+<span id="cb5-34"><a href="#cb5-34"></a>                event.<span class="bu">set</span>()        <span class="co"># start timer</span></span>
+<span id="cb5-35"><a href="#cb5-35"></a>                rcvACK <span class="op">=</span> rdt_rcv(address, recv_from_port)</span>
+<span id="cb5-36"><a href="#cb5-36"></a>                <span class="cf">if</span> rcvACK <span class="op">==</span> <span class="va">None</span>:  <span class="co"># timeout</span></span>
+<span id="cb5-37"><a href="#cb5-37"></a>                    time.sleep(<span class="fl">0.04</span>)</span>
+<span id="cb5-38"><a href="#cb5-38"></a>                <span class="cf">elif</span> is_ACK(rcvACK, <span class="dv">1</span>) <span class="kw">and</span> <span class="kw">not</span> isCorrupt(rcvACK):  <span class="co"># Successful send</span></span>
+<span id="cb5-39"><a href="#cb5-39"></a>                    State <span class="op">=</span> STATE.WAIT_CALL_0</span>
+<span id="cb5-40"><a href="#cb5-40"></a>                <span class="cf">else</span>:</span>
+<span id="cb5-41"><a href="#cb5-41"></a>                    <span class="bu">print</span>(<span class="st">&quot;Resend Packet No.&quot;</span> <span class="op">+</span> <span class="bu">str</span>(t))</span>
+<span id="cb5-42"><a href="#cb5-42"></a>                    udt_send(sndpkt, address, send_to_port)      <span class="co"># resend</span></span>
+<span id="cb5-43"><a href="#cb5-43"></a>                event.clear()        <span class="co"># stop timer</span></span>
+<span id="cb5-44"><a href="#cb5-44"></a>            <span class="cf">else</span>:</span>
+<span id="cb5-45"><a href="#cb5-45"></a>                exit(<span class="dv">1</span>)  <span class="co"># Unexpected error</span></span>
+<span id="cb5-46"><a href="#cb5-46"></a></span>
+<span id="cb5-47"><a href="#cb5-47"></a>        <span class="cf">except</span> <span class="pp">StopIteration</span>:</span>
+<span id="cb5-48"><a href="#cb5-48"></a>            udt_send(b<span class="st">&quot;0000&quot;</span>, address, send_to_port)  <span class="co"># end packet</span></span>
+<span id="cb5-49"><a href="#cb5-49"></a>            <span class="bu">print</span>(<span class="st">&quot;Send finish&quot;</span>)</span>
+<span id="cb5-50"><a href="#cb5-50"></a>            <span class="cf">break</span>  <span class="co"># All data sent</span></span></code></pre></div>
+<div style="page-break-after:always;">
+
+</div>
+<h3 id="recv">recv</h3>
+<p>The send function implement the RDT 3.0 sender FSM and its main logic.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1"></a><span class="kw">def</span> recv(send_to_port, recv_from_port):</span>
+<span id="cb6-2"><a href="#cb6-2"></a>    State <span class="op">=</span> STATE.WAIT_0</span>
+<span id="cb6-3"><a href="#cb6-3"></a>    data <span class="op">=</span> []</span>
+<span id="cb6-4"><a href="#cb6-4"></a>    rcvpkt <span class="op">=</span> <span class="va">None</span></span>
+<span id="cb6-5"><a href="#cb6-5"></a>    sndpkt <span class="op">=</span> <span class="va">None</span></span>
+<span id="cb6-6"><a href="#cb6-6"></a>    seqNum <span class="op">=</span> <span class="dv">0</span></span>
+<span id="cb6-7"><a href="#cb6-7"></a>    client <span class="op">=</span> <span class="va">None</span></span>
+<span id="cb6-8"><a href="#cb6-8"></a>    oncethru <span class="op">=</span> <span class="dv">0</span></span>
+<span id="cb6-9"><a href="#cb6-9"></a>    <span class="cf">while</span> <span class="va">True</span>:</span>
+<span id="cb6-10"><a href="#cb6-10"></a>        <span class="cf">if</span> State <span class="op">==</span> STATE.WAIT_0:</span>
+<span id="cb6-11"><a href="#cb6-11"></a>            rcvpkt, client <span class="op">=</span> rdt_rcv(recv_from_port)</span>
+<span id="cb6-12"><a href="#cb6-12"></a>            <span class="cf">if</span> rcvpkt <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb6-13"><a href="#cb6-13"></a>                <span class="bu">print</span>(<span class="st">&quot;pkt loss&quot;</span>)</span>
+<span id="cb6-14"><a href="#cb6-14"></a>                <span class="cf">continue</span>  <span class="co"># DATA pkt loss</span></span>
+<span id="cb6-15"><a href="#cb6-15"></a>            <span class="cf">if</span> <span class="bu">len</span>(rcvpkt) <span class="op">==</span> <span class="dv">4</span>:  <span class="co"># end pkt</span></span>
+<span id="cb6-16"><a href="#cb6-16"></a>                <span class="cf">break</span></span>
+<span id="cb6-17"><a href="#cb6-17"></a>            <span class="cf">if</span> isCorrupt(rcvpkt) <span class="kw">or</span> has_seq(<span class="dv">1</span>, rcvpkt):  <span class="co"># receive fail</span></span>
+<span id="cb6-18"><a href="#cb6-18"></a>                <span class="bu">print</span>(<span class="st">&quot;Receive failed1&quot;</span>)</span>
+<span id="cb6-19"><a href="#cb6-19"></a>                sndpkt <span class="op">=</span> make_pkt(ACK1, <span class="dv">1</span>)</span>
+<span id="cb6-20"><a href="#cb6-20"></a>                udt_send(sndpkt, client[<span class="dv">0</span>], send_to_port)  <span class="co"># resend</span></span>
+<span id="cb6-21"><a href="#cb6-21"></a>            <span class="cf">else</span>:</span>
+<span id="cb6-22"><a href="#cb6-22"></a>                <span class="bu">print</span>(<span class="st">&quot;Receive zero&quot;</span>)</span>
+<span id="cb6-23"><a href="#cb6-23"></a>                oncethru <span class="op">=</span> <span class="dv">1</span></span>
+<span id="cb6-24"><a href="#cb6-24"></a>                data.append(extract(rcvpkt)[<span class="dv">2</span>])</span>
+<span id="cb6-25"><a href="#cb6-25"></a>                sndpkt <span class="op">=</span> make_pkt(ACK0, <span class="dv">0</span>)</span>
+<span id="cb6-26"><a href="#cb6-26"></a>                udt_send(sndpkt, client[<span class="dv">0</span>], send_to_port)</span>
+<span id="cb6-27"><a href="#cb6-27"></a>                State <span class="op">=</span> STATE.WAIT_1</span>
+<span id="cb6-28"><a href="#cb6-28"></a>        <span class="cf">elif</span> State <span class="op">==</span> STATE.WAIT_1:</span>
+<span id="cb6-29"><a href="#cb6-29"></a>            rcvpkt, client <span class="op">=</span> rdt_rcv(recv_from_port)</span>
+<span id="cb6-30"><a href="#cb6-30"></a>            <span class="cf">if</span> rcvpkt <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb6-31"><a href="#cb6-31"></a>                <span class="bu">print</span>(<span class="st">&quot;pkt loss&quot;</span>)</span>
+<span id="cb6-32"><a href="#cb6-32"></a>                <span class="cf">continue</span>  <span class="co"># DATA pkt loss</span></span>
+<span id="cb6-33"><a href="#cb6-33"></a>            <span class="cf">if</span> <span class="bu">len</span>(rcvpkt) <span class="op">==</span> <span class="dv">4</span>:</span>
+<span id="cb6-34"><a href="#cb6-34"></a>                <span class="cf">break</span></span>
+<span id="cb6-35"><a href="#cb6-35"></a>            <span class="cf">if</span> isCorrupt(rcvpkt) <span class="kw">or</span> has_seq(<span class="dv">0</span>, rcvpkt):  <span class="co"># receive fail</span></span>
+<span id="cb6-36"><a href="#cb6-36"></a>                <span class="bu">print</span>(<span class="st">&quot;Receive failed0&quot;</span>)</span>
+<span id="cb6-37"><a href="#cb6-37"></a>                sndpkt <span class="op">=</span> make_pkt(ACK0, <span class="dv">0</span>)</span>
+<span id="cb6-38"><a href="#cb6-38"></a>                udt_send(sndpkt, client[<span class="dv">0</span>], send_to_port)  <span class="co"># resend</span></span>
+<span id="cb6-39"><a href="#cb6-39"></a>            <span class="cf">else</span>:</span>
+<span id="cb6-40"><a href="#cb6-40"></a>                <span class="bu">print</span>(<span class="st">&quot;Receive one&quot;</span>)</span>
+<span id="cb6-41"><a href="#cb6-41"></a>                data.append(extract(rcvpkt)[<span class="dv">2</span>])</span>
+<span id="cb6-42"><a href="#cb6-42"></a>                sndpkt <span class="op">=</span> make_pkt(ACK1, <span class="dv">1</span>)</span>
+<span id="cb6-43"><a href="#cb6-43"></a>                udt_send(sndpkt, client[<span class="dv">0</span>], send_to_port)</span>
+<span id="cb6-44"><a href="#cb6-44"></a>                State <span class="op">=</span> STATE.WAIT_0</span>
+<span id="cb6-45"><a href="#cb6-45"></a>        <span class="cf">else</span>:</span>
+<span id="cb6-46"><a href="#cb6-46"></a>            exit(<span class="dv">1</span>)</span>
+<span id="cb6-47"><a href="#cb6-47"></a>    <span class="cf">return</span> b<span class="st">&quot;&quot;</span>.join(data)</span></code></pre></div>
+<div style="page-break-after:always;">
+
+</div>
+<h2 id="execution-example">Execution Example</h2>
+<h3 id="start-the-programs">Start the programs</h3>
+<img src="./sending_start.png" />
+<div style="page-break-after:always;">
+
+</div>
+<h3 id="sending-complete">Sending complete</h3>
+<p><img src="./sending_finish.PNG" /></p>
+<h2 id="option-experiment">Option Experiment</h2>
+<p><img src="./Transmission_time_with_error_loss.PNG" /></p>
